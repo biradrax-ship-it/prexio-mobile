@@ -2,7 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import Storage from 'expo-sqlite/kv-store';
 import { supabase } from '../lib/supabase';
+import { Database } from '../types/supabase';
 
+type DbOffer = Database['public']['Tables']['offers']['Row'];
+
+type Offer = DbOffer & {
+  id: string;
+  price: number;
+  fee: number;
+  distanceKm: number | null;
+  total: number;
+};
 function toRadians(value: number) {
   return (value * Math.PI) / 180;
 }
@@ -20,9 +30,9 @@ function getDistanceKm(
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRadians(lat1)) *
-      Math.cos(toRadians(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadiusKm * c;
@@ -62,35 +72,35 @@ export default function ResultsScreen({ route }: any) {
   const { searchText, userCoords, locationText, district, city, radiusKm } =
     route.params;
 
-    const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
-    const [offers, setOffers] = useState<any[]>([]);
-    
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+
   const loadOffers = async () => {
     const { data, error } = await supabase
-        .from('offers')
-        .select('*');
-      
+      .from('offers')
+      .select('*');
+
     if (error) {
-        console.log('ERRO AO BUSCAR OFFERS:', error);
+      console.log('ERRO AO BUSCAR OFFERS:', error);
     } else {
-        console.log('OFFERS DO BANCO:', data); // 👈 AQUI
-        setOffers(data || []);
-     }
-    };
-    
-    const loadFavorites = async () => {
-      try {
-        const saved = await Storage.getItem('prexio_favorites');
-        if (saved) {
-          setFavoriteIds(JSON.parse(saved));
-        }
-      } catch (error) {}
-    };
-    
-    useEffect(() => {
-      loadFavorites();
-      loadOffers();
-    }, []);
+      console.log('OFFERS DO BANCO:', data); // 👈 AQUI
+      setOffers((data as Offer[]) || []);
+    }
+  };
+
+  const loadFavorites = async () => {
+    try {
+      const saved = await Storage.getItem('prexio_favorites');
+      if (saved) {
+        setFavoriteIds(JSON.parse(saved));
+      }
+    } catch (error) { }
+  };
+
+  useEffect(() => {
+    loadFavorites();
+    loadOffers();
+  }, []);
 
   const toggleFavorite = async (id: string) => {
     try {
@@ -104,136 +114,147 @@ export default function ResultsScreen({ route }: any) {
 
       setFavoriteIds(updated);
       await Storage.setItem('prexio_favorites', JSON.stringify(updated));
-    } catch (error) {}
+    } catch (error) { }
   };
   const normalizedSearch = normalizeText(searchText || '').trim();
   const inferredCategory = getCategoryFromSearch(normalizedSearch);
-  
+
   const baseOffers = offers
-  .map((offer) => {
-    let distanceKm = null;
+    .map((offer) => {
+      let distanceKm = null;
 
-    if (
-      userCoords?.latitude &&
-      userCoords?.longitude &&
-      offer.latitude &&
-      offer.longitude
-    ) {
-      distanceKm = getDistanceKm(
-        userCoords.latitude,
-        userCoords.longitude,
-        offer.latitude,
+      if (
+        userCoords?.latitude &&
+        userCoords?.longitude &&
+        offer.latitude &&
         offer.longitude
-      );
-    }
+      ) {
+        distanceKm = getDistanceKm(
+          userCoords.latitude,
+          userCoords.longitude,
+          offer.latitude,
+          offer.longitude
+        );
+      }
 
-    return {
-      ...offer,
-      distanceKm,
-      total: Number(offer.price) + Number(offer.fee || 0),
-    };
-  })
-  .filter((offer) => {
-    const productName = normalizeText(offer.product_name);
-    const category = normalizeText(offer.category);
+      return {
+        ...offer,
+        id: offer.id ?? `${Math.random()}`,
+        price: Number(offer.price ?? 0),
+        fee: Number(offer.fee ?? 0),
+        distanceKm,
+        total: Number(offer.price ?? 0) + Number(offer.fee ?? 0),
+      };
+    })
+    .filter((offer) => {
+      const productName = normalizeText(offer.product_name ?? '');
+      const category = normalizeText(offer.category ?? '');
 
-    const hasSearchText = normalizedSearch.length > 0;
+      const hasSearchText = normalizedSearch.length > 0;
 
-    let matchesSearch = true;
+      let matchesSearch = true;
 
-    if (hasSearchText) {
-      matchesSearch = productName.includes(normalizedSearch);
-    } else if (inferredCategory) {
-      matchesSearch = category === normalizeText(inferredCategory);
-    }
+      if (hasSearchText) {
+        matchesSearch = productName.includes(normalizedSearch);
+      } else if (inferredCategory) {
+        matchesSearch = category === normalizeText(inferredCategory);
+      }
 
-    const insideRadius =
-      offer.distanceKm === null ? true : offer.distanceKm <= radiusKm;
+      const insideRadius =
+        offer.distanceKm === null ? true : offer.distanceKm <= radiusKm;
 
-    return matchesSearch && insideRadius;
-  });
+      return matchesSearch && insideRadius;
+    });
 
-const districtMatches = baseOffers.filter(
-  (offer) =>
-    district &&
-    normalizeText(offer.district) === normalizeText(district)
-);
+  const districtMatches = baseOffers.filter(
+    (offer) =>
+      district &&
+      normalizeText(offer.district ?? '') === normalizeText(district)
+  );
 
-const cityMatches = baseOffers.filter(
-  (offer) =>
-    city &&
-    normalizeText(offer.city) === normalizeText(city)
-);
+  const cityMatches = baseOffers.filter(
+    (offer) =>
+      city &&
+      normalizeText(offer.city ?? '') === normalizeText(city)
+  );
 
-const finalOffers =
-  districtMatches.length > 0
-    ? districtMatches
-    : cityMatches.length > 0
-    ? cityMatches
-    : baseOffers;
+  const finalOffers =
+    districtMatches.length > 0
+      ? districtMatches
+      : cityMatches.length > 0
+        ? cityMatches
+        : baseOffers;
 
-const sortedOffers = finalOffers.sort((a, b) => a.total - b.total);
+  const sortedOffers = finalOffers.sort((a, b) => a.total - b.total);
 
-const scopeText =
-  districtMatches.length > 0
-    ? `Mostrando resultados do bairro: ${district}`
-    : cityMatches.length > 0
-    ? `Sem ofertas suficientes no bairro. Mostrando cidade: ${city}`
-    : 'Mostrando resultados próximos disponíveis';
+  const scopeText =
+    districtMatches.length > 0
+      ? `Mostrando resultados do bairro: ${district}`
+      : cityMatches.length > 0
+        ? `Sem ofertas suficientes no bairro. Mostrando cidade: ${city}`
+        : 'Mostrando resultados próximos disponíveis';
 
-      return (
-        <FlatList
-          data={sortedOffers}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingTop: 16, paddingBottom: 24 }}
-          renderItem={({ item }) => {
-            const isFavorite = favoriteIds.includes(item.id);
-      
-            return (
-              <View style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.store}>{item.store_name ?? 'Loja'}</Text>
-                    <Text style={styles.product}>{item.product_name}</Text>
-                  </View>
-      
-                  <TouchableOpacity
-                    style={[
-                      styles.favoriteButton,
-                      isFavorite && styles.favoriteButtonActive,
-                    ]}
-                    onPress={() => toggleFavorite(item.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.favoriteButtonText,
-                        isFavorite && styles.favoriteButtonTextActive,
-                      ]}
-                    >
-                      {isFavorite ? 'Salvo' : 'Favoritar'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-      
-                <Text>Categoria: {item.category}</Text>
-                <Text>Bairro: {item.district}</Text>
-                <Text>Cidade: {item.city}</Text>
-                <Text>Preço: R$ {item.price.toFixed(2)}</Text>
-                <Text>Taxa: R$ {item.fee.toFixed(2)}</Text>
-                <Text>
-                  Distância:{' '}
-                  {item.distanceKm !== null
-                    ? `${item.distanceKm.toFixed(2)} km`
-                    : 'não disponível'}
-                </Text>
-                <Text style={styles.total}>
-                  Custo total: R$ {item.total.toFixed(2)}
-                </Text>
+  return (
+    <FlatList
+      data={sortedOffers}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={{ paddingTop: 16, paddingBottom: 24 }}
+      ListEmptyComponent={
+        <View style={styles.emptyBox}>
+          <Text style={styles.emptyTitle}>Nenhuma oferta encontrada</Text>
+          <Text style={styles.emptyText}>
+            Ainda não temos ofertas reais no banco de dados para a sua localização ou filtro.
+          </Text>
+        </View>
+      }
+      renderItem={({ item }) => {
+        const isFavorite = favoriteIds.includes(item.id);
+
+        return (
+          <View style={styles.card}>
+            <View style={styles.cardTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.store}>{item.store_name ?? 'Loja'}</Text>
+                <Text style={styles.product}>{item.product_name ?? ''}</Text>
               </View>
-            );
-          }}
-        />
-      );
+
+              <TouchableOpacity
+                style={[
+                  styles.favoriteButton,
+                  isFavorite && styles.favoriteButtonActive,
+                ]}
+                onPress={() => toggleFavorite(item.id)}
+              >
+                <Text
+                  style={[
+                    styles.favoriteButtonText,
+                    isFavorite && styles.favoriteButtonTextActive,
+                  ]}
+                >
+                  {isFavorite ? 'Salvo' : 'Favoritar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text>Categoria: {item.category ?? ''}</Text>
+            <Text>Bairro: {item.district ?? ''}</Text>
+            <Text>Cidade: {item.city ?? ''}</Text>
+            <Text>Preço: R$ {item.price.toFixed(2)}</Text>
+            <Text>Taxa: R$ {item.fee.toFixed(2)}</Text>
+            <Text>
+              Distância:{' '}
+              {item.distanceKm !== null
+                ? `${item.distanceKm.toFixed(2)} km`
+                : 'não disponível'}
+            </Text>
+            <Text style={styles.total}>
+              Custo total: R$ {item.total.toFixed(2)}
+            </Text>
+          </View>
+        );
+      }}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
